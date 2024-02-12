@@ -1,0 +1,9 @@
+{
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+    "files.associations": {
+        "stdlib.h": "c",
+        "cyw43_arch.h": "c",
+        "btstack.h": "c",
+        "hids_client.h": "c"
+    }
+}
