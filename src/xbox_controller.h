@@ -17,7 +17,26 @@
 #define FUNCTION_CALL_LOG(...)
 #endif
 
-void update_led();
+static inline void update_led();
+static inline bool get_bit_status(uint val, uint bit_no);
+static inline void xbox_controller_event_handler(const uint8_t* data, uint16_t size);
+
+typedef struct
+{
+    uint8_t lx;
+    uint8_t ly;
+    uint8_t rx;
+    uint8_t ry;
+    uint8_t lt;
+    uint8_t rt;
+    uint8_t buttons;
+    uint8_t hat;
+    bool button_a;
+    bool button_b;
+    bool button_x;
+    bool button_y;
+} ControllerData;
+
 
 
 #endif

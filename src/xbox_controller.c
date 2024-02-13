@@ -12,67 +12,18 @@
 #include "xbox_controller.h"
 #include "hardware/pwm.h"
 
+#define ANALOG_MAX 255
+#define ANALOG_RANGE ANALOG_MAX + 1
+#define ANALOG_HALF ANALOG_RANGE / 2 - 1
+#define HALF_DEAD_ZONE 2
+#define PIN_L_PWM 0
+#define PIN_R_PWM 1
+#define PIN_L_FWD 2
+#define PIN_L_BWD 3
+#define PIN_R_FWD 4
+#define PIN_R_BWD 5
 
-typedef struct
-{
-    uint8_t lx;
-    uint8_t ly;
-    uint8_t rx;
-    uint8_t ry;
-    uint8_t lt;
-    uint8_t rt;
-    uint8_t buttons;
-    uint8_t hat;
-    bool button_a;
-    bool button_b;
-    bool button_x;
-    bool button_y;
-
-} ControllerData;
-
-ControllerData controller_data;
-
-static void xbox_controller_event_handler(const uint8_t* data, uint16_t size)
-{
-    // Print the data
-    controller_data.lx      = data[1];
-    controller_data.ly      = 255 - data[3]; // inverted
-    controller_data.rx      = data[5];
-    controller_data.ry      = 255 - data[7]; // inverted
-    controller_data.lt      = data[8];
-    controller_data.rt      = data[10];
-    controller_data.hat     = data[12];
-    controller_data.buttons = data[13];
-
-    printf("Left Stick: X: %03u, Y: %03u, T: %03u - Right Stick: X: %03u, Y: %03u, T: %03u - Hat: %03u - Buttons: %03u\n", 
-        controller_data.lx, 
-        controller_data.ly, 
-        controller_data.lt,
-        controller_data.rx, 
-        controller_data.ry, 
-        controller_data.rt,
-        controller_data.hat,
-        controller_data.buttons);
-
-    //printf("Size: %u, 0: %03u, 1: %03u, 2: %03u, 3: %03u, 4: %03u, 5: %03u, 6: %03u, 7: %03u, 8: %03u, 9: %03u, 10: %03u, 11: %03u, 12: %03u, 13: %03u, 14: %03u\n",
-    //    size,
-    //    data[0],
-    //    data[1],
-    //    data[2],
-    //    data[3],
-    //    data[4],
-    //    data[5],
-    //    data[6],
-    //    data[7],
-    //    data[8],
-    //    data[9],
-    //    data[10],
-    //    data[11],
-    //    data[12],
-    //    data[13],
-    //    data[14]
-    //);
-}
+ControllerData controller;
 
 int main() {
     
@@ -87,26 +38,35 @@ int main() {
     sleep_ms(2000);
     
     // The BT stack runs async with callbacks... Could also be called with RTOS
-    btstack_main(xbox_controller_event_handler);
+    btstack_main(xbox_controller_event_handler);    
 
-    // PWM outputs
-    const uint left_motor_pin = 0;
-    const uint right_motor_pin = 0;
-    gpio_set_function(left_motor_pin, GPIO_FUNC_PWM);
-    gpio_set_function(right_motor_pin, GPIO_FUNC_PWM);
+    // PWM outputs    
+    gpio_set_function(PIN_L_PWM, GPIO_FUNC_PWM);
+    gpio_set_function(PIN_R_PWM, GPIO_FUNC_PWM);
+
+    // Direction outputs
+    gpio_init(PIN_L_FWD);
+    gpio_init(PIN_L_BWD);
+    gpio_init(PIN_R_FWD);
+    gpio_init(PIN_R_BWD);
+    gpio_set_dir(PIN_L_FWD, GPIO_OUT);
+    gpio_set_dir(PIN_L_BWD, GPIO_OUT);
+    gpio_set_dir(PIN_R_FWD, GPIO_OUT);
+    gpio_set_dir(PIN_R_BWD, GPIO_OUT);    
 
     // There are 8 pwm slices each with two channels A/B
-    uint left_slice_num = pwm_gpio_to_slice_num(left_motor_pin);
-    uint right_slice_num = pwm_gpio_to_slice_num(right_motor_pin);
-    uint left_chan_num = pwm_gpio_to_channel(left_motor_pin);
-    uint right_chan_num = pwm_gpio_to_channel(left_motor_pin);
+    uint left_slice_num  = pwm_gpio_to_slice_num(PIN_L_PWM);
+    uint right_slice_num = pwm_gpio_to_slice_num(PIN_R_PWM);
+    uint left_chan_num   = pwm_gpio_to_channel(PIN_L_PWM);
+    uint right_chan_num  = pwm_gpio_to_channel(PIN_R_PWM);
 
-    const uint pwm_wrap = 255; // PWM wrap => resolution = wrap + 1
+    // We use half of the analog max because half of the analog range from the controller is used for direction
+    const uint pwm_wrap = ANALOG_HALF; // PWM wrap => resolution - 1
     pwm_set_wrap(left_slice_num, pwm_wrap);
     pwm_set_wrap(right_slice_num, pwm_wrap);
 
-    // F_pwm = 125Mhz / (125 + frac/16) / 256 = 3,9kHz
-    const uint8_t clock_div_int = 125; // 0 <= i <= 255 (0 is max division of 256)
+    // F_pwm = 125Mhz / (250 + frac/16) / 128 = 3,9kHz
+    const uint8_t clock_div_int = 250; // 0 <= i <= 255 (0 is max division of 256)
     const uint8_t clock_div_frac = 0;  // 0 <= f <= 15 (4bits range so 0-15, ie. 8 = 0.5)
     pwm_set_clkdiv_int_frac(left_slice_num, clock_div_int, clock_div_frac);
     pwm_set_clkdiv_int_frac(right_slice_num, clock_div_int, clock_div_frac);    
@@ -114,20 +74,83 @@ int main() {
     pwm_set_enabled(left_slice_num, true);
     pwm_set_enabled(right_slice_num, true);
 
+    int cal_ly = ANALOG_HALF;
+    int cal_ry = ANALOG_HALF;
+
+    // Halt program until bluetooth and other conditions are true
+    while (true)
+    {
+        bool bt_ok = bt_state == READY;
+
+        if (bt_ok)
+        {
+            // Would be cool to flash led here
+        }
+
+
+        bool calibrate = controller.button_a && controller.button_x;
+
+        if (calibrate)
+        {
+            cal_ly = controller.ly;
+            cal_ry = controller.ry;
+            break;
+        }
+
+        sleep_ms(10);
+    }
+
+
 
     // Program loop
     while (true)
     {
         update_led();
-
-        pwm_set_chan_level(left_slice_num, left_chan_num, controller_data.lt);
-        pwm_set_chan_level(right_slice_num, right_chan_num, controller_data.rt);
         
-        sleep_ms(10);
+        // Convert 0-255 to -128 - 127        
+        int ly_s = controller.ly - cal_ly;
+        int ry_s = controller.ry - cal_ry;
+
+        // Set PWM
+        pwm_set_chan_level(left_slice_num, left_chan_num, abs(ly_s));
+        pwm_set_chan_level(right_slice_num, right_chan_num, abs(ry_s));
+
+
+        bool left_fwd = false;
+        bool left_bwd = false;
+        bool right_fwd = false;
+        bool right_bwd = false;
+
+        // Set direction left
+        if (ly_s > 0 + HALF_DEAD_ZONE)
+        {
+            left_fwd = true;
+        }
+        else if (ly_s < 0 - HALF_DEAD_ZONE)
+        {
+            left_bwd = true;
+        }
+        gpio_put(PIN_L_FWD, left_fwd);
+        gpio_put(PIN_L_BWD, left_bwd);
+
+
+        // Set direction right
+        if (ry_s > 0 + HALF_DEAD_ZONE)
+        {
+            left_fwd = true;
+        }
+        else if (ry_s < 0 - HALF_DEAD_ZONE)
+        {
+            right_bwd = true;
+        }
+        gpio_put(PIN_R_FWD, right_fwd);
+        gpio_put(PIN_R_BWD, right_bwd);
+        
+        /*sleep_ms(10);*/
     }
 }
 
-void update_led()
+static inline void update_led()
 {
     if (bt_state == READY)
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
@@ -135,3 +158,35 @@ void update_led()
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);    
 }
 
+static inline bool get_bit_status(uint val, uint bit_no)
+{
+    /* Right shift num, n times and perform bitwise AND with 1 */
+    return (val >> bit_no) & 1;
+}
+
+static inline void xbox_controller_event_handler(const uint8_t* data, uint16_t size)
+{
+    // Print the data
+    controller.lx = data[1];
+    controller.ly = ANALOG_MAX - data[3]; // inverted
+    controller.rx = data[5];
+    controller.ry = ANALOG_MAX - data[7]; // inverted
+    controller.lt = data[8];
+    controller.rt = data[10];
+    controller.hat = data[12];
+    controller.buttons = data[13];
+    controller.button_a = get_bit_status(controller.buttons, 0); // 1
+    controller.button_b = get_bit_status(controller.buttons, 1); // 2
+    controller.button_x = get_bit_status(controller.buttons, 3); // 8
+    controller.button_y = get_bit_status(controller.buttons, 4); // 16
+
+        printf("Left Stick: X: %03u, Y: %03u, T: %03u - Right Stick: X: %03u, Y: %03u, T: %03u - Hat: %03u - Buttons: %03u\n",
+            controller.lx,
+            controller.ly,
+            controller.lt,
+            controller.rx,
+            controller.ry,
+            controller.rt,
+            controller.hat,
+            controller.buttons);
+}
