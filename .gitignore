@@ -361,3 +361,7 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/doc/btstack.pdf
+/doc/L298_H_Bridge.pdf
+/doc/pico-w-datasheet.pdf
+/doc/btstack hog_side 175.txt
