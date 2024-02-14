@@ -14,8 +14,9 @@
 
 #define ANALOG_MAX 255
 #define ANALOG_RANGE ANALOG_MAX + 1
-#define ANALOG_HALF ANALOG_RANGE / 2 - 1
-#define HALF_DEAD_ZONE 2
+#define ANALOG_HALF (ANALOG_RANGE) / 2 - 1
+#define HALF_DEAD_ZONE 5
+#define PWM_WRAP 1280 - 1
 #define PIN_L_PWM 0
 #define PIN_R_PWM 1
 #define PIN_L_FWD 2
@@ -60,13 +61,13 @@ int main() {
     uint left_chan_num   = pwm_gpio_to_channel(PIN_L_PWM);
     uint right_chan_num  = pwm_gpio_to_channel(PIN_R_PWM);
 
-    // We use half of the analog max because half of the analog range from the controller is used for direction
-    const uint pwm_wrap = ANALOG_HALF; // PWM wrap => resolution - 1
-    pwm_set_wrap(left_slice_num, pwm_wrap);
-    pwm_set_wrap(right_slice_num, pwm_wrap);
+     
+    pwm_set_wrap(left_slice_num, PWM_WRAP);
+    pwm_set_wrap(right_slice_num, PWM_WRAP);
 
-    // F_pwm = 125Mhz / (250 + frac/16) / 128 = 3,9kHz
-    const uint8_t clock_div_int = 250; // 0 <= i <= 255 (0 is max division of 256)
+    // PWM_res = 1280 (128 * 10)
+    // F_pwm = 125Mhz / (80 + frac/16) / 1280 = 1220Hz
+    const uint8_t clock_div_int = 80; // 0 <= i <= 255 (0 is max division of 256)
     const uint8_t clock_div_frac = 0;  // 0 <= f <= 15 (4bits range so 0-15, ie. 8 = 0.5)
     pwm_set_clkdiv_int_frac(left_slice_num, clock_div_int, clock_div_frac);
     pwm_set_clkdiv_int_frac(right_slice_num, clock_div_int, clock_div_frac);    
@@ -92,8 +93,8 @@ int main() {
 
         if (calibrate)
         {
-            cal_ly = controller.ly;
-            cal_ry = controller.ry;
+            //cal_ly = controller.ly;
+            //cal_ry = controller.ry;
             break;
         }
 
@@ -111,9 +112,13 @@ int main() {
         int ly_s = controller.ly - cal_ly;
         int ry_s = controller.ry - cal_ry;
 
+        // Convert to absolute PWM res
+        int ly_abs = abs(ly_s) * 10;
+        int ry_abs = abs(ry_s) * 10;
+
         // Set PWM
-        pwm_set_chan_level(left_slice_num, left_chan_num, abs(ly_s));
-        pwm_set_chan_level(right_slice_num, right_chan_num, abs(ry_s));
+        pwm_set_chan_level(left_slice_num, left_chan_num, ly_abs);
+        pwm_set_chan_level(right_slice_num, right_chan_num, ry_abs);
 
 
         bool left_fwd = false;
@@ -137,7 +142,7 @@ int main() {
         // Set direction right
         if (ry_s > 0 + HALF_DEAD_ZONE)
         {
-            left_fwd = true;
+            right_fwd = true;
         }
         else if (ry_s < 0 - HALF_DEAD_ZONE)
         {
@@ -146,7 +151,11 @@ int main() {
         gpio_put(PIN_R_FWD, right_fwd);
         gpio_put(PIN_R_BWD, right_bwd);
         
-        /*sleep_ms(10);*/
+
+        // Should be timered
+        //DEBUG_LOG("PWM L,R: %04d,%04d, L: %01u,%01u, R: %01u,%01u\n",
+        //    ly_abs, ry_abs, left_fwd, left_bwd, right_fwd, right_bwd);
+        //sleep_ms(100);
     }
 }
 
@@ -180,13 +189,13 @@ static inline void xbox_controller_event_handler(const uint8_t* data, uint16_t s
     controller.button_x = get_bit_status(controller.buttons, 3); // 8
     controller.button_y = get_bit_status(controller.buttons, 4); // 16
 
-        printf("Left Stick: X: %03u, Y: %03u, T: %03u - Right Stick: X: %03u, Y: %03u, T: %03u - Hat: %03u - Buttons: %03u\n",
-            controller.lx,
-            controller.ly,
-            controller.lt,
-            controller.rx,
-            controller.ry,
-            controller.rt,
-            controller.hat,
-            controller.buttons);
+    VERBOSE_LOG("Left Stick: X: %03u, Y: %03u, T: %03u - Right Stick: X: %03u, Y: %03u, T: %03u - Hat: %03u - Buttons: %03u\n",
+        controller.lx,
+        controller.ly,
+        controller.lt,
+        controller.rx,
+        controller.ry,
+        controller.rt,
+        controller.hat,
+        controller.buttons);
 }

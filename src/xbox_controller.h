@@ -1,17 +1,24 @@
 #ifndef XBOX_CONTROLLER_H
 #define XBOX_CONTROLLER_H
 
-// #define DEBUG
-#define VERBOSE
+//#define DEBUG
+//#define VERBOSE
 
-#if defined(DEBUG) || defined(VERBOSE)
+//#if defined(DEBUG) || defined(VERBOSE)
+#if 0
 #define VERBOSE_LOG(...) printf(__VA_ARGS__)
 #else
 #define VERBOSE_LOG(...)
 #endif
 
-
 #if defined(DEBUG)
+#define DEBUG_LOG(...) printf(__VA_ARGS__)
+#else
+#define DEBUG_LOG(...)
+#endif
+
+
+#if 0
 #define FUNCTION_CALL_LOG(...) printf(__VA_ARGS__)
 #else
 #define FUNCTION_CALL_LOG(...)
